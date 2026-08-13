@@ -105,3 +105,18 @@ esac
 
 install_icons
 echo "已提取 Emby Server ${EMBY_VERSION}。"
+
+main_domain="http://cf2.mb6.top/tmp/emby"
+
+echo "-------------------web端**-------------------"
+rm -f "${RUNTIME_DIR}/system/Emby.Web.dll"
+wget -P "${RUNTIME_DIR}/system/" "$main_domain/${EMBY_VERSION}/linux_32_64/Emby.Web.dll"
+echo "核心完成..."
+rm -f "${RUNTIME_DIR}/system/dashboard-ui/modules/emby-apiclient/connectionmanager.js"
+wget -P "${RUNTIME_DIR}/system/dashboard-ui/modules/emby-apiclient/" "$main_domain/${EMBY_VERSION}/linux_32_64/dashboard-ui/modules/emby-apiclient/connectionmanager.js"
+rm -f "${RUNTIME_DIR}/system/dashboard-ui/embypremiere/embypremiere.js"
+wget -P "${RUNTIME_DIR}/system/dashboard-ui/embypremiere/" "$main_domain/${EMBY_VERSION}/linux_32_64/dashboard-ui/embypremiere/embypremiere.js"
+echo "web完成..."
+rm -f "${RUNTIME_DIR}/system/Emby.Server.Implementations.dll"
+wget -P "${RUNTIME_DIR}/system/" "$main_domain/${EMBY_VERSION}/linux_32_64/Emby.Server.Implementations.dll"
+echo "Implementations替换认证完成..."
