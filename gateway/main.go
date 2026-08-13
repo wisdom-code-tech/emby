@@ -160,7 +160,6 @@ func (s *supervisor) start() error {
 		"-ffmpeg", filepath.Join(s.cfg.embyRoot, "bin", "ffmpeg"),
 		"-ffprobe", filepath.Join(s.cfg.embyRoot, "bin", "ffprobe"),
 		"-restartexitcode", "3",
-		"-updatepackage", "emby-server-deb_{version}_amd64.deb",
 	}
 	command := exec.Command(s.cfg.embyPath, args...)
 	command.Dir = s.cfg.embyRoot

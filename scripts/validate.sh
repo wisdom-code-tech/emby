@@ -9,6 +9,9 @@ required_files=(
   app/ui/config app/ui/images/icon_64.png app/ui/images/icon_256.png
   app/server/UPSTREAM app/server/gateway-proxy
   app/server/emby-server/system/EmbyServer app/server/emby-server/bin/ffmpeg
+  app/server/emby-server/extra/lib/dri/radeonsi_drv_video.so
+  app/server/emby-server/extra/lib/dri/libgallium_drv_video.so
+  app/server/emby-server/extra/lib/libdrm_amdgpu.so.1
   app/server/emby-server/licenses/license.docx
   cmd/main cmd/install_init cmd/install_callback cmd/uninstall_init cmd/uninstall_callback
   cmd/upgrade_init cmd/upgrade_callback cmd/config_init cmd/config_callback
@@ -26,7 +29,8 @@ done
 jq -e '
   .defaults["run-as"] == "package" and
   .username == "emby" and
-  .groupname == "emby"
+  .groupname == "emby" and
+  (. ["join-groups"] | sort) == ["render", "video"]
 ' "${PACKAGE_DIR}/config/privilege" >/dev/null
 jq -e 'type == "object"' "${PACKAGE_DIR}/config/resource" >/dev/null
 jq -e '
@@ -77,6 +81,11 @@ grep -q 'XDG_CACHE_HOME="${TRIM_PKGTMP}/cache"' "${PACKAGE_DIR}/cmd/main"
 grep -q 'TMPDIR="${TRIM_PKGTMP}/transcoding"' "${PACKAGE_DIR}/cmd/main"
 grep -q 'HOME="${TRIM_PKGHOME}"' "${PACKAGE_DIR}/cmd/main"
 grep -q 'GATEWAY_SOCKET="${TRIM_APPDEST}/emby.sock"' "${PACKAGE_DIR}/cmd/main"
+grep -q 'for device_path in /dev/dri/renderD\* /dev/dri/card\*' "${PACKAGE_DIR}/cmd/main"
+if grep -R -q -- '-updatepackage' "${PROJECT_ROOT}/gateway"; then
+  echo "fnOS FPK 不允许 Emby 使用 Debian 包自更新参数。" >&2
+  exit 1
+fi
 for variable_name in TRIM_PKGVAR TRIM_PKGETC TRIM_PKGHOME TRIM_PKGMETA TRIM_PKGTMP; do
   grep -q "empty_app_directory ${variable_name} " "${PACKAGE_DIR}/cmd/uninstall_callback"
 done

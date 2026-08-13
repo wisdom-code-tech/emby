@@ -3,5 +3,9 @@
     "run-as": "package"
   },
   "username": "emby",
-  "groupname": "emby"
+  "groupname": "emby",
+  "join-groups": [
+    "video",
+    "render"
+  ]
 }

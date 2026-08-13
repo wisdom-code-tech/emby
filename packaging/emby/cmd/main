@@ -95,6 +95,27 @@ export_emby_environment() {
   export OverrideGpuAddressSpace=48
 }
 
+log_hardware_access() {
+  {
+    printf '%s\n' "[$(date '+%Y-%m-%d %H:%M:%S')] Emby 硬件加速权限检查"
+    id
+    device_found=false
+    for device_path in /dev/dri/renderD* /dev/dri/card*; do
+      [ -e "${device_path}" ] || continue
+      device_found=true
+      ls -l "${device_path}"
+      if [ -r "${device_path}" ] && [ -w "${device_path}" ]; then
+        printf '%s\n' "GPU 设备可读写：${device_path}"
+      else
+        printf '%s\n' "GPU 设备不可读写：${device_path}"
+      fi
+    done
+    if [ "${device_found}" = false ]; then
+      printf '%s\n' "未发现 /dev/dri GPU 设备。"
+    fi
+  } >> "${LOG_FILE}" 2>&1
+}
+
 is_running() {
   gateway_pid="$(read_gateway_pid 2>/dev/null || true)"
   [ -n "${gateway_pid}" ] && [ -S "${GATEWAY_SOCKET}" ]
@@ -131,6 +152,7 @@ start_app() {
   cleanup_legacy_processes
   mkdir -p "${TRIM_PKGTMP}/cache" "${TRIM_PKGTMP}/transcoding"
   export_emby_environment
+  log_hardware_access
   umask 077
   "${GATEWAY_BINARY}" \
     -socket "${GATEWAY_SOCKET}" \
