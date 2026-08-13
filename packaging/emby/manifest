@@ -1,0 +1,16 @@
+appname        = emby
+version        = 4.9.5.0-rc1
+display_name   = Emby
+desc           = 将个人视频、音乐和照片整理并串流到各类设备的媒体服务器。
+source         = thirdparty
+platform       = x86
+os_min_version = 1.1.3100
+maintainer     = Emby LLC
+maintainer_url = https://emby.media
+distributor    = Jerry
+ctl_stop       = true
+checkport      = false
+disable_authorization_path = false
+desktop_uidir = ui
+desktop_applaunchname = emby.Application
+changelog = Emby Server 4.9.5.0；fnOS 打包修订 rc1。

@@ -1,0 +1,11 @@
+[
+  {
+    "stepTitle": "Emby 运行设置",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "媒体目录权限由 fnOS 应用设置管理。Go 代理通过 127.0.0.1:8096 连接 Emby，并从 /app/emby 统一网关对外提供服务。请确认 Emby 的本地 IP 地址已设为 127.0.0.1。"
+      }
+    ]
+  }
+]

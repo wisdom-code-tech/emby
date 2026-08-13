@@ -1,0 +1,169 @@
+name: 构建最新 Emby FPK
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "指定 Emby 版本；留空则使用上游最新稳定版"
+        required: false
+        type: string
+      force:
+        description: "覆盖同版本、同打包修订的 Release 资产"
+        required: false
+        default: false
+        type: boolean
+      stable:
+        description: "发布不带 rc 后缀的正式版"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: emby-fpk-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: 检出打包仓库
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: 确定上游版本和发布状态
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          FORCE_BUILD: ${{ inputs.force }}
+          STABLE_RELEASE: ${{ inputs.stable }}
+        run: |
+          set -euo pipefail
+          version="${REQUESTED_VERSION#v}"
+          if [ -z "${version}" ]; then
+            version="$(gh api repos/MediaBrowser/Emby.Releases/releases/latest --jq '.tag_name | ltrimstr("v")')"
+          fi
+          revision="$(tr -cd '0-9' < PACKAGING_REVISION)"
+          test -n "${revision}"
+          asset_name="emby-server-deb_${version}_amd64.deb"
+          asset_digest="$(gh api "repos/MediaBrowser/Emby.Releases/releases/tags/${version}" \
+            --jq ".assets[] | select(.name == \"${asset_name}\") | .digest")"
+          test -n "${asset_digest}"
+          asset_sha256="${asset_digest#sha256:}"
+          test "${#asset_sha256}" -eq 64
+
+          release_channel=rc
+          package_version="${version}-rc${revision}"
+          if [ "${STABLE_RELEASE}" = "true" ]; then
+            release_channel=stable
+            package_version="${version}"
+          fi
+          tag="v${package_version}"
+          should_build=true
+          if gh release view "${tag}" >/dev/null 2>&1 && [ "${FORCE_BUILD}" != "true" ]; then
+            should_build=false
+          fi
+          {
+            echo "version=${version}"
+            echo "revision=${revision}"
+            echo "asset_sha256=${asset_sha256}"
+            echo "package_version=${package_version}"
+            echo "release_channel=${release_channel}"
+            echo "tag=${tag}"
+            echo "should_build=${should_build}"
+          } >> "${GITHUB_OUTPUT}"
+          {
+            echo "### Emby ${package_version}"
+            echo "上游资产：${asset_name}"
+            echo "构建：${should_build}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: 配置 Go
+        if: steps.release.outputs.should_build == 'true'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: gateway/go.mod
+          cache-dependency-path: gateway/go.mod
+
+      - name: 安装构建依赖
+        if: steps.release.outputs.should_build == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils file imagemagick jq xz-utils
+
+      - name: 注入版本
+        if: steps.release.outputs.should_build == 'true'
+        run: |
+          chmod +x scripts/*.sh packaging/emby/cmd/*
+          ./scripts/prepare-release.sh \
+            "${{ steps.release.outputs.version }}" \
+            "${{ steps.release.outputs.revision }}" \
+            "${{ steps.release.outputs.release_channel }}"
+
+      - name: 构建并校验 FPK
+        if: steps.release.outputs.should_build == 'true'
+        env:
+          EMBY_VERSION: ${{ steps.release.outputs.version }}
+          EMBY_DEB_SHA256: ${{ steps.release.outputs.asset_sha256 }}
+        run: make build
+
+      - name: 生成发布资产
+        if: steps.release.outputs.should_build == 'true'
+        env:
+          PACKAGE_VERSION: ${{ steps.release.outputs.package_version }}
+        run: |
+          set -euo pipefail
+          asset="dist/emby-${PACKAGE_VERSION}-fnos.fpk"
+          mv dist/emby.fpk "${asset}"
+          checksum="$(sha256sum "${asset}" | awk '{print $1}')"
+          printf '%s  %s\n' "${checksum}" "$(basename "${asset}")" > dist/SHA256SUMS
+
+      - name: 保存构建产物
+        if: steps.release.outputs.should_build == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: emby-${{ steps.release.outputs.package_version }}-fnos
+          path: |
+            dist/*.fpk
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 创建或更新 GitHub Release
+        if: steps.release.outputs.should_build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+          PACKAGE_VERSION: ${{ steps.release.outputs.package_version }}
+          RELEASE_CHANNEL: ${{ steps.release.outputs.release_channel }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          notes_file="$(mktemp)"
+          {
+            echo "Emby Server ${VERSION} 的飞牛 fnOS 原生 FPK（包版本 ${PACKAGE_VERSION}）。"
+            echo
+            echo "- 上游版本：https://github.com/MediaBrowser/Emby.Releases/releases/tag/${VERSION}"
+            echo "- 架构：x86_64"
+            echo "- Go Unix Socket 统一网关代理"
+            echo "- 运行期不依赖 Docker"
+            echo "- 安装前请校验 SHA256SUMS"
+          } > "${notes_file}"
+
+          release_flags=(--target "${GITHUB_SHA}" --title "Emby ${PACKAGE_VERSION} for fnOS" --notes-file "${notes_file}")
+          if [ "${RELEASE_CHANNEL}" = "rc" ]; then
+            release_flags+=(--prerelease)
+          else
+            release_flags+=(--latest)
+          fi
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" dist/*.fpk dist/SHA256SUMS --clobber
+            gh release edit "${RELEASE_TAG}" "${release_flags[@]}"
+          else
+            gh release create "${RELEASE_TAG}" dist/*.fpk dist/SHA256SUMS "${release_flags[@]}"
+          fi

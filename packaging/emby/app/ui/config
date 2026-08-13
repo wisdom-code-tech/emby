@@ -1,0 +1,15 @@
+{
+  ".url": {
+    "emby.Application": {
+      "title": "Emby",
+      "icon": "images/icon_{0}.png",
+      "type": "url",
+      "protocol": "",
+      "gatewaySocket": "emby.sock",
+      "gatewayPrefix": "/app/emby",
+      "url": "/app/emby/web/index.html",
+      "allUsers": true,
+      "accessPerm": "readonly"
+    }
+  }
+}

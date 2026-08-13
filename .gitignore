@@ -1,0 +1,7 @@
+.cache/
+.tools/
+dist/
+packaging/emby/*.fpk
+packaging/emby/app/server/emby-server/
+packaging/emby/app/server/gateway-proxy
+.DS_Store

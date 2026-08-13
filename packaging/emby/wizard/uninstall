@@ -1,0 +1,24 @@
+[
+  {
+    "stepTitle": "卸载 Emby",
+    "items": [
+      {
+        "type": "radio",
+        "field": "wizard_data_action",
+        "label": "如何处理 Emby 数据",
+        "initValue": "keep",
+        "options": [
+          {"label": "保留配置和数据库（推荐）", "value": "keep"},
+          {"label": "永久删除全部应用数据", "value": "delete"}
+        ],
+        "rules": [
+          {"required": true, "message": "请选择数据处理方式"}
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "删除应用数据会清空 Emby 数据库、用户、插件、缓存和日志，但不会删除用户授权的媒体文件。"
+      }
+    ]
+  }
+]

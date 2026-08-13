@@ -1,0 +1,9 @@
+#!/bin/bash
+case "${wizard_data_action:-keep}" in
+  keep|delete) ;;
+  *)
+    printf '%s\n' "Emby 数据处理方式无效。" > "${TRIM_TEMP_LOGFILE}"
+    exit 1
+    ;;
+esac
+exit 0

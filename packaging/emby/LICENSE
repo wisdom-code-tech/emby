@@ -1,0 +1,9 @@
+Emby Server is distributed by Emby LLC under its own license terms.
+
+This fnOS package redistributes the unmodified official Linux x86_64 release.
+The complete license bundle shipped by Emby is preserved at:
+
+  app/server/emby-server/licenses/
+
+Upstream release source:
+https://github.com/MediaBrowser/Emby.Releases

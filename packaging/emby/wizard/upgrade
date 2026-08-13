@@ -1,0 +1,11 @@
+[
+  {
+    "stepTitle": "升级 Emby",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "升级会保留 Emby 数据库、用户、插件和媒体库配置。建议升级前备份应用数据。"
+      }
+    ]
+  }
+]

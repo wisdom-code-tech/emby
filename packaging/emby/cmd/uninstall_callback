@@ -1,0 +1,38 @@
+#!/bin/bash
+
+report_error() {
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "$1" > "${TRIM_TEMP_LOGFILE}"
+  fi
+}
+
+resolve_volume_root() {
+  var_path="${TRIM_PKGVAR:-}"
+  [ -n "${var_path}" ] || return 1
+  resolved_var="$(readlink -f -- "${var_path}" 2>/dev/null || true)"
+  [ -n "${resolved_var}" ] || resolved_var="${var_path}"
+  resolved_var="${resolved_var%/}"
+  printf '%s\n' "${resolved_var}" | grep -Eq '^/vol[0-9]+/@appdata/emby$' || return 1
+  printf '%s\n' "${resolved_var%/@appdata/emby}"
+}
+
+empty_app_directory() {
+  target="$1"
+  [ -e "${target}" ] || return 0
+  if [ -L "${target}" ] || [ ! -d "${target}" ]; then
+    report_error "拒绝清理非目录或软链接路径：${target}"
+    return 1
+  fi
+  find "${target}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+}
+
+if [ "${wizard_data_action:-keep}" = "delete" ]; then
+  volume_root="$(resolve_volume_root)" || {
+    report_error "无法安全确定 Emby 安装卷，已取消数据清理。"
+    exit 1
+  }
+  for storage_dir in @appdata @appconf @apphome @appmeta @apptemp; do
+    empty_app_directory "${volume_root}/${storage_dir}/emby" || exit 1
+  done
+fi
+exit 0

@@ -1,0 +1,182 @@
+#!/bin/bash
+
+APP_ROOT="${TRIM_APPDEST}/server/emby-server"
+APP_BINARY="${APP_ROOT}/system/EmbyServer"
+GATEWAY_BINARY="${TRIM_APPDEST}/server/gateway-proxy"
+GATEWAY_SOCKET="${TRIM_APPDEST}/emby.sock"
+GATEWAY_PREFIX="/app/emby"
+INTERNAL_PORT="8096"
+APP_PID_FILE="${TRIM_PKGVAR}/emby.pid"
+GATEWAY_PID_FILE="${TRIM_PKGVAR}/gateway.pid"
+APP_LOG="${TRIM_PKGVAR}/emby.log"
+GATEWAY_LOG="${TRIM_PKGVAR}/gateway.log"
+
+report_error() {
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "$1" > "${TRIM_TEMP_LOGFILE}"
+  fi
+}
+
+pid_matches_binary() {
+  pid="$1"
+  binary="$2"
+  [ -n "${pid}" ] || return 1
+  kill -0 "${pid}" 2>/dev/null || return 1
+  [ -e "/proc/${pid}/exe" ] || return 0
+  expected="$(readlink -f "${binary}" 2>/dev/null || printf '%s' "${binary}")"
+  actual="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+  actual="${actual% (deleted)}"
+  [ "${actual}" = "${expected}" ]
+}
+
+read_valid_pid() {
+  pid_file="$1"
+  binary="$2"
+  [ -r "${pid_file}" ] || return 1
+  candidate="$(head -n 1 "${pid_file}" | tr -cd '0-9')"
+  pid_matches_binary "${candidate}" "${binary}" || return 1
+  printf '%s\n' "${candidate}"
+}
+
+find_binary_pids() {
+  binary="$1"
+  expected="$(readlink -f "${binary}" 2>/dev/null || printf '%s' "${binary}")"
+  for proc_exe in /proc/[0-9]*/exe; do
+    actual="$(readlink "${proc_exe}" 2>/dev/null || true)"
+    actual="${actual% (deleted)}"
+    [ "${actual}" = "${expected}" ] || continue
+    proc_dir="${proc_exe%/exe}"
+    printf '%s\n' "${proc_dir##*/}"
+  done
+}
+
+stop_pids() {
+  pids="$1"
+  [ -n "${pids}" ] || return 0
+  for pid in ${pids}; do kill -TERM "${pid}" 2>/dev/null || true; done
+  count=0
+  while [ "${count}" -lt 20 ]; do
+    remaining=""
+    for pid in ${pids}; do
+      kill -0 "${pid}" 2>/dev/null && remaining="${remaining} ${pid}"
+    done
+    [ -z "${remaining}" ] && return 0
+    sleep 1
+    count=$((count + 1))
+  done
+  for pid in ${remaining}; do kill -KILL "${pid}" 2>/dev/null || true; done
+}
+
+port_ready() {
+  (exec 3<>"/dev/tcp/127.0.0.1/${INTERNAL_PORT}") >/dev/null 2>&1
+}
+
+export_emby_environment() {
+  export EMBY_DATA="${TRIM_PKGVAR}/programdata"
+  export AMDGPU_IDS="${APP_ROOT}/extra/share/libdrm/amdgpu.ids"
+  export FONTCONFIG_PATH="${APP_ROOT}/etc/fonts"
+  export LD_LIBRARY_PATH="${APP_ROOT}/lib:${APP_ROOT}/extra/lib"
+  export LIBVA_DRIVERS_PATH="${APP_ROOT}/extra/lib/dri"
+  export OCL_ICD_VENDORS="${APP_ROOT}/extra/etc/OpenCL/vendors"
+  export PATH="${APP_ROOT}/bin:${PATH}"
+  export PCI_IDS_PATH="${APP_ROOT}/share/hwdata/pci.ids"
+  export SSL_CERT_FILE="${APP_ROOT}/etc/ssl/certs/ca-certificates.crt"
+  export XDG_CACHE_HOME="${TRIM_PKGVAR}/cache"
+  export TMPDIR="${TRIM_PKGVAR}/transcoding-temp"
+  export HOME="${TRIM_PKGHOME:-${TRIM_PKGVAR}/home}"
+  export NEOReadDebugKeys=1
+  export OverrideGpuAddressSpace=48
+}
+
+is_running() {
+  app_pid="$(read_valid_pid "${APP_PID_FILE}" "${APP_BINARY}" 2>/dev/null || true)"
+  gateway_pid="$(read_valid_pid "${GATEWAY_PID_FILE}" "${GATEWAY_BINARY}" 2>/dev/null || true)"
+  [ -n "${app_pid}" ] && [ -n "${gateway_pid}" ] && [ -S "${GATEWAY_SOCKET}" ]
+}
+
+cleanup_orphans() {
+  stop_pids "$(find_binary_pids "${GATEWAY_BINARY}")"
+  stop_pids "$(find_binary_pids "${APP_BINARY}")"
+  rm -f "${APP_PID_FILE}" "${GATEWAY_PID_FILE}"
+  [ ! -S "${GATEWAY_SOCKET}" ] || rm -f "${GATEWAY_SOCKET}"
+}
+
+start_app() {
+  is_running && return 0
+  [ -x "${APP_BINARY}" ] && [ -x "${GATEWAY_BINARY}" ] || {
+    report_error "Emby 或统一网关代理缺失，请重新安装应用。"
+    return 1
+  }
+  if [ -e "${GATEWAY_SOCKET}" ] && [ ! -S "${GATEWAY_SOCKET}" ]; then
+    report_error "统一网关 Socket 路径被非 Socket 文件占用。"
+    return 1
+  fi
+
+  cleanup_orphans
+  package_home="${TRIM_PKGHOME:-${TRIM_PKGVAR}/home}"
+  mkdir -p "${TRIM_PKGVAR}/programdata" "${TRIM_PKGVAR}/cache" \
+    "${TRIM_PKGVAR}/transcoding-temp" "${package_home}"
+  export_emby_environment
+  umask 077
+  (
+    cd "${APP_ROOT}" || exit 1
+    exec "${APP_BINARY}" \
+      -programdata "${EMBY_DATA}" \
+      -ffdetect "${APP_ROOT}/bin/ffdetect" \
+      -ffmpeg "${APP_ROOT}/bin/ffmpeg" \
+      -ffprobe "${APP_ROOT}/bin/ffprobe" \
+      -restartexitcode 3 \
+      -updatepackage 'emby-server-deb_{version}_amd64.deb'
+  ) >> "${APP_LOG}" 2>&1 &
+  app_pid=$!
+  printf '%s\n' "${app_pid}" > "${APP_PID_FILE}"
+
+  count=0
+  while ! port_ready && [ "${count}" -lt 60 ]; do
+    if ! pid_matches_binary "${app_pid}" "${APP_BINARY}"; then
+      cleanup_orphans
+      report_error "Emby 启动失败，请检查 ${APP_LOG}。"
+      return 1
+    fi
+    sleep 1
+    count=$((count + 1))
+  done
+  if ! port_ready; then
+    cleanup_orphans
+    report_error "Emby 未在 60 秒内监听内部端口，请检查 ${APP_LOG}。"
+    return 1
+  fi
+
+  "${GATEWAY_BINARY}" -socket "${GATEWAY_SOCKET}" \
+    -upstream "http://127.0.0.1:${INTERNAL_PORT}" \
+    -prefix "${GATEWAY_PREFIX}" >> "${GATEWAY_LOG}" 2>&1 &
+  gateway_pid=$!
+  printf '%s\n' "${gateway_pid}" > "${GATEWAY_PID_FILE}"
+  count=0
+  while [ ! -S "${GATEWAY_SOCKET}" ] && [ "${count}" -lt 10 ]; do
+    pid_matches_binary "${gateway_pid}" "${GATEWAY_BINARY}" || break
+    sleep 1
+    count=$((count + 1))
+  done
+  if ! is_running; then
+    cleanup_orphans
+    report_error "统一网关代理启动失败，请检查 ${GATEWAY_LOG}。"
+    return 1
+  fi
+}
+
+stop_app() {
+  gateway_pid="$(read_valid_pid "${GATEWAY_PID_FILE}" "${GATEWAY_BINARY}" 2>/dev/null || true)"
+  app_pid="$(read_valid_pid "${APP_PID_FILE}" "${APP_BINARY}" 2>/dev/null || true)"
+  stop_pids "${gateway_pid}"
+  stop_pids "${app_pid}"
+  cleanup_orphans
+}
+
+case "${1:-}" in
+  start) start_app ;;
+  stop) stop_app ;;
+  cleanup) cleanup_orphans ;;
+  status) if is_running; then exit 0; else exit 3; fi ;;
+  *) exit 1 ;;
+esac

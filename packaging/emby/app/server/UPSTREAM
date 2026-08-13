@@ -1,0 +1,4 @@
+version=4.9.5.0
+source=https://github.com/MediaBrowser/Emby.Releases/releases/tag/4.9.5.0
+asset=emby-server-deb_4.9.5.0_amd64.deb
+sha256=1d718ffa0169c393de3eafda65b1b057a3db4ead93ffeb5883abd01735de9843
