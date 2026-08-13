@@ -116,6 +116,19 @@ log_hardware_access() {
   } >> "${LOG_FILE}" 2>&1
 }
 
+run_gateway() {
+  # Emby 自带的 glibc 只能作用于 Emby 进程树，不能污染 fnOS 生命周期脚本。
+  export_emby_environment
+  umask 077
+  exec "${GATEWAY_BINARY}" \
+    -socket "${GATEWAY_SOCKET}" \
+    -upstream "http://127.0.0.1:${INTERNAL_PORT}" \
+    -prefix "${GATEWAY_PREFIX}" \
+    -emby "${APP_BINARY}" \
+    -emby-root "${APP_ROOT}" \
+    -data "${TRIM_PKGVAR}"
+}
+
 is_running() {
   gateway_pid="$(read_gateway_pid 2>/dev/null || true)"
   [ -n "${gateway_pid}" ] && [ -S "${GATEWAY_SOCKET}" ]
@@ -151,16 +164,8 @@ start_app() {
 
   cleanup_legacy_processes
   mkdir -p "${TRIM_PKGTMP}/cache" "${TRIM_PKGTMP}/transcoding"
-  export_emby_environment
   log_hardware_access
-  umask 077
-  "${GATEWAY_BINARY}" \
-    -socket "${GATEWAY_SOCKET}" \
-    -upstream "http://127.0.0.1:${INTERNAL_PORT}" \
-    -prefix "${GATEWAY_PREFIX}" \
-    -emby "${APP_BINARY}" \
-    -emby-root "${APP_ROOT}" \
-    -data "${EMBY_DATA}" >> "${LOG_FILE}" 2>&1 &
+  run_gateway >> "${LOG_FILE}" 2>&1 &
   gateway_pid=$!
   printf '%s\n' "${gateway_pid}" > "${PID_FILE}"
 

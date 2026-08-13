@@ -82,6 +82,13 @@ grep -q 'TMPDIR="${TRIM_PKGTMP}/transcoding"' "${PACKAGE_DIR}/cmd/main"
 grep -q 'HOME="${TRIM_PKGHOME}"' "${PACKAGE_DIR}/cmd/main"
 grep -q 'GATEWAY_SOCKET="${TRIM_APPDEST}/emby.sock"' "${PACKAGE_DIR}/cmd/main"
 grep -q 'for device_path in /dev/dri/renderD\* /dev/dri/card\*' "${PACKAGE_DIR}/cmd/main"
+grep -q '^run_gateway() {' "${PACKAGE_DIR}/cmd/main"
+grep -q '^  exec "${GATEWAY_BINARY}" \\' "${PACKAGE_DIR}/cmd/main"
+grep -q '^  run_gateway >> "${LOG_FILE}" 2>&1 &$' "${PACKAGE_DIR}/cmd/main"
+if sed -n '/^start_app() {/,/^}/p' "${PACKAGE_DIR}/cmd/main" | grep -q 'export_emby_environment'; then
+  echo "Emby 私有 LD_LIBRARY_PATH 不得导出到 fnOS 生命周期脚本。" >&2
+  exit 1
+fi
 if grep -R -q -- '-updatepackage' "${PROJECT_ROOT}/gateway"; then
   echo "fnOS FPK 不允许 Emby 使用 Debian 包自更新参数。" >&2
   exit 1
