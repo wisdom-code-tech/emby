@@ -5,7 +5,7 @@
 ## 当前版本
 
 - Emby Server：`4.9.5.0`
-- FPK：`4.9.5.0-rc1`
+- FPK：`4.9.5.0-rc2`
 - 平台：fnOS x86_64，最低版本 `1.1.3100`
 - 统一网关路径：`/app/emby`
 - 代理上游：`127.0.0.1:8096`
@@ -36,13 +36,16 @@ make build
 
 ## 数据与访问
 
-- Emby 程序数据：`TRIM_PKGVAR/programdata`
-- 缓存：`TRIM_PKGVAR/cache`
-- 临时转码：`TRIM_PKGVAR/transcoding-temp`
-- 日志：`TRIM_PKGVAR/emby.log`、`TRIM_PKGVAR/gateway.log`
+- Emby 程序数据：`TRIM_PKGVAR`
+- 缓存：`TRIM_PKGTMP/cache`
+- 临时转码：`TRIM_PKGTMP/transcoding`
+- 应用 HOME：`TRIM_PKGHOME`
+- 日志：`TRIM_PKGVAR/logs/`、`TRIM_PKGVAR/gateway.log`
 - 媒体目录：安装后在 fnOS 应用设置中授权给 Emby，再到 Emby 管理后台添加媒体库。
 
 `8096` 是 Go 代理使用的固定上游端口，不应在 Emby 网络设置中修改；修改后会导致代理无法连接。Emby 首次设置完成后，应在“服务器 → 网络 → 本地 IP 地址”中填写 `127.0.0.1`，确保该端口只监听回环地址。这个设置属于 Emby 自己的数据配置，FPK 不在首次启动前猜写其私有配置格式。
+
+Go 网关是 Emby 的直接父进程。Emby 与 FFmpeg 位于独立进程组；停止应用时先发送 `SIGTERM` 并同步等待，超时后才对整个进程组发送 `SIGKILL`。代理异常退出时，Linux 父进程死亡信号也会通知 Emby 退出。
 
 ## 已知边界
 

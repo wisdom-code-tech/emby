@@ -2,12 +2,19 @@ package main
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strconv"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestReverseProxyStripsGatewayPrefix(t *testing.T) {
@@ -124,4 +131,80 @@ func TestRemoveStaleSocketRejectsRegularFile(t *testing.T) {
 	if err := removeStaleSocket(path); err == nil {
 		t.Fatal("regular file was accepted")
 	}
+}
+
+func TestProcessHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_EMBY_HELPER") != "1" {
+		return
+	}
+	listener, err := net.Listen("tcp", os.Getenv("EMBY_HELPER_ADDR"))
+	if err != nil {
+		os.Exit(2)
+	}
+	defer listener.Close()
+	child := exec.Command("sleep", "300")
+	if err := child.Start(); err != nil {
+		os.Exit(3)
+	}
+	if err := os.WriteFile(os.Getenv("EMBY_HELPER_CHILD_PID"), []byte(strconv.Itoa(child.Process.Pid)), 0600); err != nil {
+		os.Exit(4)
+	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM)
+	<-signals
+	// 故意不 wait 子进程，用于验证网关的 subreaper 能回收被收养的后代。
+	os.Exit(0)
+}
+
+func TestSupervisorStopsAndReapsProcessGroup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux process group and subreaper test")
+	}
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := probe.Addr().String()
+	probe.Close()
+
+	tempDir := t.TempDir()
+	wrapper := filepath.Join(tempDir, "emby-helper")
+	wrapperBody := "#!/bin/sh\nexec \"$EMBY_HELPER_BINARY\" -test.run=TestProcessHelper\n"
+	if err := os.WriteFile(wrapper, []byte(wrapperBody), 0700); err != nil {
+		t.Fatal(err)
+	}
+	childPIDFile := filepath.Join(tempDir, "child.pid")
+	t.Setenv("GO_WANT_EMBY_HELPER", "1")
+	t.Setenv("EMBY_HELPER_BINARY", os.Args[0])
+	t.Setenv("EMBY_HELPER_ADDR", address)
+	t.Setenv("EMBY_HELPER_CHILD_PID", childPIDFile)
+	upstream, _ := url.Parse("http://" + address)
+	supervisor := &supervisor{cfg: config{
+		embyPath: wrapper,
+		embyRoot: tempDir,
+		dataPath: tempDir,
+		upstream: upstream,
+	}}
+	if err := supervisor.start(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(childPIDFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childPID, err := strconv.Atoi(string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.stop(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(filepath.Join("/proc", strconv.Itoa(childPID))); os.IsNotExist(err) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("child process %d was not reaped", childPID)
 }

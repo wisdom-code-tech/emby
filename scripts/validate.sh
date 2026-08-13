@@ -38,6 +38,10 @@ case "${package_version}" in
   *) echo "manifest 与 Emby 上游版本不一致。" >&2; exit 1 ;;
 esac
 grep -Eq '^sha256=[0-9a-f]{64}$' "${PACKAGE_DIR}/app/server/UPSTREAM"
+grep -q 'EMBY_DATA="${TRIM_PKGVAR}"' "${PACKAGE_DIR}/cmd/main"
+grep -q 'XDG_CACHE_HOME="${TRIM_PKGTMP}/cache"' "${PACKAGE_DIR}/cmd/main"
+grep -q 'TMPDIR="${TRIM_PKGTMP}/transcoding"' "${PACKAGE_DIR}/cmd/main"
+grep -q 'HOME="${TRIM_PKGHOME}"' "${PACKAGE_DIR}/cmd/main"
 if find "${PACKAGE_DIR}" -iname '*docker*' -print -quit | grep -q .; then
   echo "原生包中不允许出现 Docker 相关文件。" >&2
   exit 1

@@ -1,5 +1,21 @@
 #!/bin/bash
-mkdir -p "${TRIM_PKGVAR}/programdata" "${TRIM_PKGVAR}/cache" "${TRIM_PKGVAR}/transcoding-temp"
-chmod 0700 "${TRIM_PKGVAR}/programdata"
 bash "${0%/*}/main" cleanup
+mkdir -p "${TRIM_PKGVAR}" "${TRIM_PKGTMP}/cache" "${TRIM_PKGTMP}/transcoding" "${TRIM_PKGHOME}"
+
+# rc1 将 Emby 持久数据错误地放在 TRIM_PKGVAR/programdata；升级时迁移到官方定义的 TRIM_PKGVAR。
+legacy_data="${TRIM_PKGVAR}/programdata"
+if [ -d "${legacy_data}" ]; then
+  for legacy_item in "${legacy_data}"/* "${legacy_data}"/.[!.]* "${legacy_data}"/..?*; do
+    [ -e "${legacy_item}" ] || continue
+    item_name="${legacy_item##*/}"
+    if [ -e "${TRIM_PKGVAR}/${item_name}" ]; then
+      printf '%s\n' "无法迁移旧 Emby 数据，目标已存在：${item_name}" > "${TRIM_TEMP_LOGFILE}"
+      exit 1
+    fi
+    mv "${legacy_item}" "${TRIM_PKGVAR}/"
+  done
+  rmdir "${legacy_data}"
+fi
+rm -rf "${TRIM_PKGVAR}/cache" "${TRIM_PKGVAR}/transcoding-temp"
+chmod 0700 "${TRIM_PKGVAR}" "${TRIM_PKGTMP}" "${TRIM_PKGHOME}"
 exit 0

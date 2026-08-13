@@ -1,4 +1,4 @@
 #!/bin/bash
-mkdir -p "${TRIM_PKGVAR}/programdata" "${TRIM_PKGVAR}/cache" "${TRIM_PKGVAR}/transcoding-temp"
-chmod 0700 "${TRIM_PKGVAR}/programdata"
+mkdir -p "${TRIM_PKGVAR}" "${TRIM_PKGTMP}/cache" "${TRIM_PKGTMP}/transcoding" "${TRIM_PKGHOME}"
+chmod 0700 "${TRIM_PKGVAR}" "${TRIM_PKGTMP}" "${TRIM_PKGHOME}"
 exit 0

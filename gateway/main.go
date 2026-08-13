@@ -11,9 +11,11 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -22,13 +24,19 @@ type config struct {
 	socketPath string
 	upstream   *url.URL
 	prefix     string
+	embyPath   string
+	embyRoot   string
+	dataPath   string
 }
 
 func parseConfig() (config, error) {
-	var socketPath, upstreamRaw, prefix string
+	var socketPath, upstreamRaw, prefix, embyPath, embyRoot, dataPath string
 	flag.StringVar(&socketPath, "socket", "", "Unix socket path exposed to the fnOS gateway")
 	flag.StringVar(&upstreamRaw, "upstream", "http://127.0.0.1:8096", "Emby upstream URL")
 	flag.StringVar(&prefix, "prefix", "/app/emby", "fnOS gateway path prefix")
+	flag.StringVar(&embyPath, "emby", "", "EmbyServer executable managed by this gateway")
+	flag.StringVar(&embyRoot, "emby-root", "", "Emby Server installation root")
+	flag.StringVar(&dataPath, "data", "", "Emby program data directory")
 	flag.Parse()
 
 	if socketPath == "" || !filepath.IsAbs(socketPath) {
@@ -41,7 +49,12 @@ func parseConfig() (config, error) {
 	if !strings.HasPrefix(prefix, "/") || prefix == "/" || strings.HasSuffix(prefix, "/") {
 		return config{}, fmt.Errorf("prefix must look like /app/name without a trailing slash")
 	}
-	return config{socketPath: socketPath, upstream: upstream, prefix: prefix}, nil
+	for name, path := range map[string]string{"emby": embyPath, "emby-root": embyRoot, "data": dataPath} {
+		if path == "" || !filepath.IsAbs(path) {
+			return config{}, fmt.Errorf("%s must be an absolute path", name)
+		}
+	}
+	return config{socketPath: socketPath, upstream: upstream, prefix: prefix, embyPath: embyPath, embyRoot: embyRoot, dataPath: dataPath}, nil
 }
 
 func stripGatewayPrefix(path, prefix string) string {
@@ -124,6 +137,126 @@ func removeStaleSocket(path string) error {
 	return os.Remove(path)
 }
 
+type supervisor struct {
+	mu      sync.Mutex
+	cfg     config
+	command *exec.Cmd
+	done    chan error
+}
+
+func (s *supervisor) start() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.command != nil {
+		return nil
+	}
+	if connection, err := net.DialTimeout("tcp", s.cfg.upstream.Host, 500*time.Millisecond); err == nil {
+		connection.Close()
+		return fmt.Errorf("refusing to start Emby because %s is already in use", s.cfg.upstream.Host)
+	}
+	args := []string{
+		"-programdata", s.cfg.dataPath,
+		"-ffdetect", filepath.Join(s.cfg.embyRoot, "bin", "ffdetect"),
+		"-ffmpeg", filepath.Join(s.cfg.embyRoot, "bin", "ffmpeg"),
+		"-ffprobe", filepath.Join(s.cfg.embyRoot, "bin", "ffprobe"),
+		"-restartexitcode", "3",
+		"-updatepackage", "emby-server-deb_{version}_amd64.deb",
+	}
+	command := exec.Command(s.cfg.embyPath, args...)
+	command.Dir = s.cfg.embyRoot
+	command.Env = os.Environ()
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	command.SysProcAttr = embySysProcAttr()
+	if err := prepareChildSupervisor(); err != nil {
+		return fmt.Errorf("prepare child supervisor: %w", err)
+	}
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("start Emby: %w", err)
+	}
+	s.command = command
+	s.done = make(chan error, 1)
+	go func(done chan<- error) { done <- command.Wait() }(s.done)
+
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-s.done:
+			s.command = nil
+			s.done = nil
+			if err == nil {
+				return fmt.Errorf("Emby exited before listening on %s", s.cfg.upstream.Host)
+			}
+			return fmt.Errorf("Emby exited before listening on %s: %w", s.cfg.upstream.Host, err)
+		default:
+		}
+		connection, err := net.DialTimeout("tcp", s.cfg.upstream.Host, 500*time.Millisecond)
+		if err == nil {
+			connection.Close()
+			return nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	s.stopLocked()
+	return fmt.Errorf("Emby did not listen on %s within 60s", s.cfg.upstream.Host)
+}
+
+func (s *supervisor) stop() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stopLocked()
+}
+
+func (s *supervisor) markExited(err error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.command != nil && s.command.Process != nil {
+		pid := s.command.Process.Pid
+		_ = signalProcessGroup(pid, syscall.SIGKILL)
+		reapProcessGroup(pid, 3*time.Second)
+	}
+	s.command = nil
+	s.done = nil
+	if err == nil {
+		return errors.New("Emby exited unexpectedly")
+	}
+	return fmt.Errorf("Emby exited unexpectedly: %w", err)
+}
+
+func (s *supervisor) stopLocked() error {
+	if s.command == nil || s.command.Process == nil {
+		s.command = nil
+		s.done = nil
+		return nil
+	}
+	pid := s.command.Process.Pid
+	_ = signalProcessGroup(pid, syscall.SIGTERM)
+	select {
+	case err := <-s.done:
+		if err != nil {
+			log.Printf("Emby exited: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		_ = signalProcessGroup(pid, syscall.SIGKILL)
+		select {
+		case <-s.done:
+		case <-time.After(3 * time.Second):
+			log.Printf("timed out reaping Emby process group %d", pid)
+		}
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for processGroupAlive(pid) && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if processGroupAlive(pid) {
+		_ = signalProcessGroup(pid, syscall.SIGKILL)
+	}
+	reapProcessGroup(pid, 3*time.Second)
+	s.command = nil
+	s.done = nil
+	return nil
+}
+
 func run(ctx context.Context, cfg config) error {
 	if err := removeStaleSocket(cfg.socketPath); err != nil {
 		return err
@@ -137,6 +270,12 @@ func run(ctx context.Context, cfg config) error {
 	if err := os.Chmod(cfg.socketPath, 0660); err != nil {
 		return fmt.Errorf("chmod unix socket: %w", err)
 	}
+	supervisor := &supervisor{cfg: cfg}
+	if err := supervisor.start(); err != nil {
+		return err
+	}
+	defer supervisor.stop()
+	embyDone := supervisor.done
 
 	server := &http.Server{
 		Handler:           newReverseProxy(cfg.upstream, cfg.prefix),
@@ -148,20 +287,26 @@ func run(ctx context.Context, cfg config) error {
 	log.Printf("fnOS gateway listening on unix://%s and forwarding %s to %s", cfg.socketPath, cfg.prefix, cfg.upstream)
 
 	select {
+	case err := <-embyDone:
+		_ = server.Close()
+		<-done
+		return supervisor.markExited(err)
 	case err := <-done:
+		stopErr := supervisor.stop()
 		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+			err = nil
 		}
-		return err
+		return errors.Join(err, stopErr)
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		shutdownErr := server.Shutdown(shutdownCtx)
+		stopErr := supervisor.stop()
 		serveErr := <-done
 		if errors.Is(serveErr, http.ErrServerClosed) {
 			serveErr = nil
 		}
-		return errors.Join(shutdownErr, serveErr)
+		return errors.Join(shutdownErr, stopErr, serveErr)
 	}
 }
 
