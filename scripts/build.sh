@@ -22,5 +22,6 @@ mkdir -p "${DIST_DIR}"
 )
 fpk_file="$(find "${PACKAGE_DIR}" -maxdepth 1 -type f -name '*.fpk' -print -quit)"
 [ -n "${fpk_file}" ] || { echo "fnpack 未生成 FPK。" >&2; exit 1; }
+"${PROJECT_ROOT}/scripts/repack-fpk.sh" "${fpk_file}" "${PACKAGE_DIR}/app"
 mv "${fpk_file}" "${DIST_DIR}/emby.fpk"
 echo "构建完成: ${DIST_DIR}/emby.fpk"

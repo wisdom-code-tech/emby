@@ -17,5 +17,4 @@ if [ -d "${legacy_data}" ]; then
   rmdir "${legacy_data}"
 fi
 rm -rf "${TRIM_PKGVAR}/cache" "${TRIM_PKGVAR}/transcoding-temp"
-chmod 0700 "${TRIM_PKGVAR}" "${TRIM_PKGTMP}" "${TRIM_PKGHOME}"
 exit 0

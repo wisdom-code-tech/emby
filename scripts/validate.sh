@@ -47,6 +47,12 @@ for script_file in "${PACKAGE_DIR}"/cmd/*; do
   [ -x "${script_file}" ] || { echo "生命周期脚本不可执行: ${script_file}" >&2; exit 1; }
 done
 
+broken_link="$(find -L "${PACKAGE_DIR}/app" -type l -print -quit 2>/dev/null || true)"
+if [ -n "${broken_link}" ]; then
+  echo "应用目录包含断裂或循环符号链接: ${broken_link}" >&2
+  exit 1
+fi
+
 file "${PACKAGE_DIR}/app/server/emby-server/system/EmbyServer" | grep -q 'ELF 64-bit.*x86-64'
 file "${PACKAGE_DIR}/app/server/gateway-proxy" | grep -q 'ELF 64-bit.*x86-64.*statically linked'
 file "${PACKAGE_DIR}/ICON.PNG" | grep -q 'PNG image data, 64 x 64'
@@ -74,6 +80,10 @@ grep -q 'GATEWAY_SOCKET="${TRIM_APPDEST}/emby.sock"' "${PACKAGE_DIR}/cmd/main"
 for variable_name in TRIM_PKGVAR TRIM_PKGETC TRIM_PKGHOME TRIM_PKGMETA TRIM_PKGTMP; do
   grep -q "empty_app_directory ${variable_name} " "${PACKAGE_DIR}/cmd/uninstall_callback"
 done
+if grep -R -E 'chmod[[:space:]].*TRIM_(PKGVAR|PKGETC|PKGHOME|PKGMETA|PKGTMP)' "${PACKAGE_DIR}/cmd" >/dev/null; then
+  echo "生命周期脚本不应修改 fnOS 管理目录的根权限。" >&2
+  exit 1
+fi
 if find "${PACKAGE_DIR}" \( -name '.DS_Store' -o -name 'Thumbs.db' \) | grep -q .; then
   echo "打包目录中不允许出现操作系统元数据文件。" >&2
   exit 1
