@@ -1,5 +1,5 @@
 appname        = emby
-version        = 4.9.5.0-rc2
+version        = 4.9.5.0-rc3
 display_name   = Emby
 desc           = 将个人视频、音乐和照片整理并串流到各类设备的媒体服务器。
 source         = thirdparty
@@ -13,4 +13,4 @@ checkport      = false
 disable_authorization_path = false
 desktop_uidir = ui
 desktop_applaunchname = emby.Application
-changelog = Emby Server 4.9.5.0；修正 fnOS 目录映射并使用进程组管理 Emby 与 FFmpeg。
+changelog = Emby Server 4.9.5.0；按 fnOS 应用框架修正入口控制、卸载目录与打包校验。

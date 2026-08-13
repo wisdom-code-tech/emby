@@ -6,33 +6,32 @@ report_error() {
   fi
 }
 
-resolve_volume_root() {
-  var_path="${TRIM_PKGVAR:-}"
-  [ -n "${var_path}" ] || return 1
-  resolved_var="$(readlink -f -- "${var_path}" 2>/dev/null || true)"
-  [ -n "${resolved_var}" ] || resolved_var="${var_path}"
-  resolved_var="${resolved_var%/}"
-  printf '%s\n' "${resolved_var}" | grep -Eq '^/vol[0-9]+/@appdata/emby$' || return 1
-  printf '%s\n' "${resolved_var%/@appdata/emby}"
-}
-
 empty_app_directory() {
-  target="$1"
-  [ -e "${target}" ] || return 0
-  if [ -L "${target}" ] || [ ! -d "${target}" ]; then
-    report_error "拒绝清理非目录或软链接路径：${target}"
+  variable_name="$1"
+  storage_name="$2"
+  target="${!variable_name-}"
+  [ -n "${target}" ] || {
+    report_error "fnOS 未提供 ${variable_name}，已取消数据清理。"
     return 1
-  fi
-  find "${target}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+  }
+  [ -e "${target}" ] || return 0
+  resolved_target="$(readlink -f -- "${target}" 2>/dev/null || true)"
+  printf '%s\n' "${resolved_target}" | grep -Eq "^/vol[0-9]+/${storage_name}/emby$" || {
+    report_error "拒绝清理不符合 fnOS 应用目录规则的路径：${target}"
+    return 1
+  }
+  [ -d "${resolved_target}" ] && [ ! -L "${resolved_target}" ] || {
+    report_error "拒绝清理非目录路径：${target}"
+    return 1
+  }
+  find "${resolved_target}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 }
 
 if [ "${wizard_data_action:-keep}" = "delete" ]; then
-  volume_root="$(resolve_volume_root)" || {
-    report_error "无法安全确定 Emby 安装卷，已取消数据清理。"
-    exit 1
-  }
-  for storage_dir in @appdata @appconf @apphome @appmeta @apptemp; do
-    empty_app_directory "${volume_root}/${storage_dir}/emby" || exit 1
-  done
+  empty_app_directory TRIM_PKGVAR @appdata || exit 1
+  empty_app_directory TRIM_PKGETC @appconf || exit 1
+  empty_app_directory TRIM_PKGHOME @apphome || exit 1
+  empty_app_directory TRIM_PKGMETA @appmeta || exit 1
+  empty_app_directory TRIM_PKGTMP @apptemp || exit 1
 fi
 exit 0

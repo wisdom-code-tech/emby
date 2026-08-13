@@ -9,7 +9,9 @@
       "gatewayPrefix": "/app/emby",
       "url": "/app/emby/web/index.html",
       "allUsers": true,
-      "accessPerm": "readonly"
+      "control": {
+        "accessPerm": "readonly"
+      }
     }
   }
 }
